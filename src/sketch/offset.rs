@@ -43,12 +43,7 @@
 //! to the planar projections stored in the geometry collection.
 use crate::float_types::Real;
 use crate::sketch::Sketch;
-use geo::{Coord, Geometry, GeometryCollection, LineString, MultiPolygon, Point, Polygon};
-use geo_buf::{
-    buffer_multi_polygon, buffer_multi_polygon_rounded, buffer_point, buffer_polygon,
-    buffer_polygon_rounded, skeleton_of_multi_polygon_to_linestring,
-    skeleton_of_polygon_to_linestring,
-};
+use geo::{Buffer, ConcaveHull, Coord, Geometry, GeometryCollection, LineString, MultiPolygon, Point, Polygon, TriangulateDelaunay};
 use std::fmt::Debug;
 use std::sync::OnceLock;
 
@@ -78,68 +73,64 @@ macro_rules! cast_through_f64 {
 
 #[allow(clippy::unnecessary_cast)]
 fn buf_poly(poly: &Polygon<Real>, d: Real) -> MultiPolygon<Real> {
-    cast_through_f64!(poly, |p: &Polygon<f64>| buffer_polygon(p, d as f64))
+    cast_through_f64!(poly, |p: &Polygon<f64>| p.buffer(d as f64))
 }
 
 #[allow(clippy::unnecessary_cast)]
 fn buf_poly_round(poly: &Polygon<Real>, d: Real) -> MultiPolygon<Real> {
-    cast_through_f64!(poly, |p: &Polygon<f64>| buffer_polygon_rounded(p, d as f64))
+    cast_through_f64!(poly, |p: &Polygon<f64>| p.buffer(d as f64))
 }
 
 #[allow(clippy::unnecessary_cast)]
 fn buf_multi_poly(mpoly: &MultiPolygon<Real>, d: Real) -> MultiPolygon<Real> {
-    cast_through_f64!(mpoly, |m: &MultiPolygon<f64>| buffer_multi_polygon(
-        m, d as f64
-    ))
+    cast_through_f64!(mpoly, |m: &MultiPolygon<f64>| m.buffer(d as f64))
 }
 
 #[allow(clippy::unnecessary_cast)]
 fn buf_multi_poly_round(mpoly: &MultiPolygon<Real>, d: Real) -> MultiPolygon<Real> {
-    cast_through_f64!(mpoly, |m: &MultiPolygon<f64>| buffer_multi_polygon_rounded(
-        m, d as f64
-    ))
+    cast_through_f64!(mpoly, |m: &MultiPolygon<f64>| m.buffer(d as f64))
 }
 
 #[allow(clippy::unnecessary_cast)]
-fn buf_point(pt: &Point<Real>, d: Real, res: usize) -> Polygon<Real> {
+fn buf_point(pt: &Point<Real>, d: Real, _res: usize) -> Polygon<Real> {
     // buffer_point takes f64 Point, so just build one and cast result back
     let pt_f64 = Point::new(pt.x() as f64, pt.y() as f64);
-    buffer_point(&pt_f64, d as f64, res).map_coords(|c| Coord {
+    pt_f64.buffer(d as f64).map_coords(|c| Coord {
         x: c.x as Real,
         y: c.y as Real,
-    })
+    }).concave_hull(2.0) // this should probably be the param instead of res
 }
 
 #[allow(clippy::unnecessary_cast)]
-fn skel_poly(poly: &Polygon<Real>, inward: bool) -> Vec<LineString<Real>> {
+fn skel_poly(poly: &Polygon<Real>, _inward: bool) -> Vec<LineString<Real>> {
     let poly_f64 = poly.map_coords(|c| Coord {
         x: c.x as f64,
         y: c.y as f64,
     });
-    skeleton_of_polygon_to_linestring(&poly_f64, inward)
+    poly_f64.constrained_triangulation(Default::default()).unwrap()
         .into_iter()
-        .map(|ls| {
-            ls.map_coords(|c| Coord {
+        .map(|tri| {
+            LineString(tri.map_coords(|c| Coord {
                 x: c.x as Real,
                 y: c.y as Real,
-            })
+            }).to_array().to_vec())
         })
         .collect()
 }
 
 #[allow(clippy::unnecessary_cast)]
-fn skel_multi_poly(mpoly: &MultiPolygon<Real>, inward: bool) -> Vec<LineString<Real>> {
+fn skel_multi_poly(mpoly: &MultiPolygon<Real>, _inward: bool) -> Vec<LineString<Real>> {
     let mpoly_f64 = mpoly.map_coords(|c| Coord {
         x: c.x as f64,
         y: c.y as f64,
     });
-    skeleton_of_multi_polygon_to_linestring(&mpoly_f64, inward)
+    mpoly_f64.constrained_triangulation(Default::default()).unwrap()
         .into_iter()
-        .map(|ls| {
-            ls.map_coords(|c| Coord {
+        .map(|tri| {
+            LineString(tri.map_coords(|c| Coord {
                 x: c.x as Real,
                 y: c.y as Real,
-            })
+            }).to_array().to_vec())
         })
         .collect()
 }
